@@ -1,27 +1,57 @@
 const axios = require("axios");
+const nodemailer = require("nodemailer");
+require("dotenv").config(); // Load environment variables (optional for security)
 
-async function fetchAndGenerateReport() {
+// Configuration (Replace with your credentials)
+const SMTP_CONFIG = {
+    host:process.env.GMAIL_HOST,
+    port: 587,
+    secure: false, // Use TLS
+    auth: {
+        user: process.env.EMAIL_USER, // Use environment variable or hardcoded email
+        pass: process.env.EMAIL_PASS, // Use App Password (not normal password)
+    },
+};
+
+// Create a Nodemailer Transporter
+const transporter = nodemailer.createTransport(SMTP_CONFIG);
+
+// Function to fetch data from OData Service and generate the report
+async function fetchAndSendReport() {
     try {
-        // Fetch Data from OData Service
+        // Fetch Data
         const response = await axios.get("http://localhost:4004/odata/v4/catalog/fieldvalueservices");
 
-        // console.log(response);
-        
-        // Extract data (modify according to your OData structure)
-        const reportData = response.data.value.map((item) => ({
-            tableName: item.tablename, // Ensure this matches your OData fields
-            nullCount: item.nullcount  // Ensure this matches your OData fields
+        if (!response.data || !response.data.value) {
+            throw new Error("Invalid OData response structure");
+        }
+
+        console.log("Fetched Data:", response.data.value); // Debugging
+
+        // Extract relevant data
+        const reportData = response.data.value.map((item, index) => ({
+            serialNo: index + 1,
+            tableName: item.tablename, // Ensure correct field mapping
+            nullCount: item.nullcount, // Ensure correct field mapping
         }));
 
-        // Generate Report
-        return generateBTPReport(reportData);
+        // Generate HTML Report
+        const reportHtml = generateBTPReport(reportData);
+
+        // Send Email
+        await sendEmail(reportHtml);
+        console.log("✅ Email sent successfully!");
     } catch (error) {
-        console.error("Error fetching OData:", error);
-        return "<p>Error generating report. Check logs for details.</p>";
+        console.error("❌ Error:", error.message);
     }
 }
 
+// Function to generate HTML report
 function generateBTPReport(data) {
+    if (!data || data.length === 0) {
+        return `<h2>BTP Monitoring Report</h2><p>No data available.</p>`;
+    }
+
     let html = `
         <h2>BTP Monitoring Report</h2>
         <table border="1" cellpadding="5" cellspacing="0">
@@ -31,11 +61,11 @@ function generateBTPReport(data) {
                 <th>Null Count</th>
             </tr>`;
 
-    data.forEach((row, index) => {
-        let color = row.nullCount > 0 ? "red" : "black"; // Highlight if nullCount > 0
+    data.forEach((row) => {
+        let color = row.nullCount > 0 ? "red" : "black";
         html += `
             <tr>
-                <td>${index + 1}</td>
+                <td>${row.serialNo}</td>
                 <td>${row.tableName}</td>
                 <td style="color: ${color}; font-weight: bold;">${row.nullCount}</td>
             </tr>`;
@@ -45,10 +75,17 @@ function generateBTPReport(data) {
     return html;
 }
 
-// Run Function and Print Report
-fetchAndGenerateReport().then(report => {
-    console.log(report); // You can send this via email instead
-});
+// Function to send email
+async function sendEmail(reportHtml) {
+    const mailOptions = {
+        from: SMTP_CONFIG.auth.user,
+        to: "rajuvenkatesh98@gmail.com", // Change to the recipient's email
+        subject: "BTP Monitoring Report",
+        html: reportHtml, // Send the report as HTML
+    };
 
-// Export function if needed in another module
-module.exports = { fetchAndGenerateReport };
+    return transporter.sendMail(mailOptions);
+}
+
+// Run the function to fetch and send report
+fetchAndSendReport();
